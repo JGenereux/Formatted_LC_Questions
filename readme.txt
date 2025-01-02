@@ -30,3 +30,4 @@ ex. question name = "Two sum", search for two-sum instead.
 ###
 Also the formatted file will still have extra newline characters (\n) like how the questions are on the site.
 I left this optional as what I'm using for this is how I want it.
+t
