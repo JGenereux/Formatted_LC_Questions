@@ -9,6 +9,7 @@
 
 using json = nlohmann::json;
 
+// used to have a dynamic string
 typedef struct Response
 {
   char *string;
@@ -19,8 +20,9 @@ size_t write_chunk(void *data, size_t size, size_t nmemb, void *userData);
 
 void formatResponse(char *response);
 std::string FormatHTMLToString(const std::string &response);
+std::vector<std::string> GetTestCases(const std::string &content);
 
-void CreateJSON(json *response);
+void CreateJSON(json *response, std::vector<std::string> &testCases);
 
 int main()
 {
@@ -143,6 +145,8 @@ void formatResponse(char *response)
     json parsed = json::parse(response);
     json question = parsed["data"]["question"];
 
+    std::vector<std::string> testCases = {};
+
     for (const auto &tag : currentTags)
     {
       if (question.contains(tag) && tag == "topicTags")
@@ -167,9 +171,14 @@ void formatResponse(char *response)
       if (question.contains(tag))
       {
         question[tag] = FormatHTMLToString(question[tag]);
+        // Get testcases from given content
+        if (tag == "content")
+        {
+          testCases = GetTestCases(question[tag]);
+        }
       }
     }
-    CreateJSON(&question);
+    CreateJSON(&question, testCases);
   }
   catch (json::parse_error &e)
   {
@@ -178,6 +187,7 @@ void formatResponse(char *response)
   }
 }
 
+// check for <code> tag
 std::string FormatHTMLToString(const std::string &response)
 {
   int i = 0;
@@ -234,13 +244,78 @@ std::string FormatHTMLToString(const std::string &response)
       continue;
     }
 
+    // check for multiple whitespace characters
+    // want to keep 1 where there are multiple
+    if (response[i] == '\n')
+    {
+      result += "\n";
+      while (i + 1 < response.length() && response[i + 1] == '\n')
+      {
+        i++;
+      }
+      i++;
+      continue;
+    }
+
+    if (response[i] == '\t')
+    {
+      while (i + 1 < response.length() && response[i + 1] == '\t')
+      {
+        i++;
+      }
+      i++;
+      continue;
+    }
+
     result += (response[i]);
     i++;
   }
   return result;
 }
+/**
+ * Basic test cases given by leetcode are given in a string of the form. Example case & output.
+ * Should always be at least 2 test cases given.
+ * @returns array of oxpected outputs for the test cases.
+ */
 
-void CreateJSON(json *response)
+std::vector<std::string> GetTestCases(const std::string &content)
+{
+  std::vector<std::string> testCases;
+  int i = 0;
+  while (i < content.length())
+  {
+    if (i < content.length() - 7 && content.substr(i, 7) == "Example")
+    {
+      i += 7;
+      while (i < content.length())
+      {
+        if (i <= content.length() - 6 && content.substr(i, 6) == "Output")
+        {
+          i += 6;
+          std::string testCase = "";
+          while (i < content.length() && content[i] != '\n')
+          {
+            if (content[i] != ' ' && content[i] != ':')
+            {
+              testCase += content[i];
+            }
+            i++;
+          }
+          testCases.push_back(testCase);
+          break;
+        }
+        i++;
+      }
+    }
+    else
+    {
+      i++;
+    }
+  }
+  return testCases;
+}
+
+void CreateJSON(json *response, std::vector<std::string> &testCases)
 {
   // filter out invalid characters from title
   std::string title = (*response)["title"];
@@ -260,10 +335,30 @@ void CreateJSON(json *response)
     return;
   }
 
+  outputJSON << "{\n";
   // iterates through json response inserting key and value as pair into output file
   for (auto it = (*response).begin(); it != (*response).end(); ++it)
   {
-    outputJSON << it.key() << ": " << it.value() << "\n";
+    outputJSON << "\"" << it.key() << "\"" << ": " << it.value() << ',' << "\n";
   }
+
+  // handle situation where testCases might not generate
+  outputJSON << "\"testCases\"" << ": [" << "\n";
+  int i = 0;
+  for (auto &test : testCases)
+  {
+    if (i == testCases.size() - 1)
+    {
+      outputJSON << "\"" << test << "\"" << "\n";
+      outputJSON << "]\n";
+    }
+    else
+    {
+      outputJSON << "\"" << test << "\"" << "," << "\n";
+    }
+    i++;
+  }
+
+  outputJSON << "}";
   outputJSON.close();
 }
