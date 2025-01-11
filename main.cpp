@@ -16,13 +16,20 @@ typedef struct Response
   size_t size;
 };
 
+struct TestCaseResponse
+{
+  std::vector<std::string> testCases;
+  std::vector<std::pair<std::string, std::string>> testCaseParams;
+};
+
 size_t write_chunk(void *data, size_t size, size_t nmemb, void *userData);
 
 void formatResponse(char *response);
 std::string FormatHTMLToString(const std::string &response);
-std::vector<std::string> GetTestCases(const std::string &content);
+TestCaseResponse GetTestCases(const std::string &content);
 
-void CreateJSON(json *response, std::vector<std::string> &testCases);
+std::pair<std::string, std::string> GetParamName(const std::string &param);
+void CreateJSON(json *response, const TestCaseResponse &testCases);
 
 int main()
 {
@@ -145,7 +152,7 @@ void formatResponse(char *response)
     json parsed = json::parse(response);
     json question = parsed["data"]["question"];
 
-    std::vector<std::string> testCases = {};
+    TestCaseResponse testCases;
 
     for (const auto &tag : currentTags)
     {
@@ -178,6 +185,7 @@ void formatResponse(char *response)
         }
       }
     }
+
     CreateJSON(&question, testCases);
   }
   catch (json::parse_error &e)
@@ -272,15 +280,16 @@ std::string FormatHTMLToString(const std::string &response)
   }
   return result;
 }
+
 /**
  * Basic test cases given by leetcode are given in a string of the form. Example case & output.
  * Should always be at least 2 test cases given.
  * @returns array of oxpected outputs for the test cases.
  */
-
-std::vector<std::string> GetTestCases(const std::string &content)
+TestCaseResponse GetTestCases(const std::string &content)
 {
-  std::vector<std::string> testCases;
+  TestCaseResponse tests;
+
   int i = 0;
   while (i < content.length())
   {
@@ -289,6 +298,50 @@ std::vector<std::string> GetTestCases(const std::string &content)
       i += 7;
       while (i < content.length())
       {
+        if (i <= content.length() - 6 && content.substr(i, 6) == "Input:")
+        {
+          i += 6;
+          std::string input = "";
+          std::string paramName = "";
+          std::string paramRes = "";
+          int j = -1;
+          while (i < content.length() - 7 && content.substr(i, 7) != "\nOutput")
+          {
+            // check if new param is being searched
+            if (i < content.length() - 1 && (content[i] == ',' && content[i + 1] == ' '))
+            {
+              tests.testCaseParams.push_back({paramName, paramRes});
+              paramName = "";
+              paramRes = "";
+              j = -1;
+              i++;
+              continue;
+            }
+            // now looking for paramResult so set j (flag for where = is)
+            if (content[i] == '=')
+            {
+              j = i;
+              i++;
+              continue;
+            }
+
+            if (j == -1 && content[i] != ' ')
+            {
+              paramName += content[i];
+            }
+            else if (j != -1 && content[i] != ' ')
+            {
+              paramRes += content[i];
+            }
+            i++;
+          }
+          if (paramName.length() != 0 && paramRes.length() != 0)
+          {
+            tests.testCaseParams.push_back({paramName, paramRes});
+          }
+          // std::cout << paramName << " " << paramRes << std::endl;
+        }
+
         if (i <= content.length() - 6 && content.substr(i, 6) == "Output")
         {
           i += 6;
@@ -301,7 +354,7 @@ std::vector<std::string> GetTestCases(const std::string &content)
             }
             i++;
           }
-          testCases.push_back(testCase);
+          tests.testCases.push_back(testCase);
           break;
         }
         i++;
@@ -312,10 +365,11 @@ std::vector<std::string> GetTestCases(const std::string &content)
       i++;
     }
   }
-  return testCases;
+
+  return tests;
 }
 
-void CreateJSON(json *response, std::vector<std::string> &testCases)
+void CreateJSON(json *response, const TestCaseResponse &tests)
 {
   // filter out invalid characters from title
   std::string title = (*response)["title"];
@@ -343,22 +397,78 @@ void CreateJSON(json *response, std::vector<std::string> &testCases)
   }
 
   // handle situation where testCases might not generate
+
+  // Insert testcases
   outputJSON << "\"testCases\"" << ": [" << "\n";
-  int i = 0;
-  for (auto &test : testCases)
+
+  int j = 0;
+  int size = tests.testCases.size();
+  for (int i = 0; i < size; i++)
   {
-    if (i == testCases.size() - 1)
+    // start inserting new object into array inside json file
+    outputJSON << "{\n";
+
+    std::string expectedResult = tests.testCases[i]; // testcase expected outputs
+    outputJSON << "\"expectedResult\": " << "\"" << expectedResult << "\",\n";
+
+    int numParams = tests.testCaseParams.size() / tests.testCases.size();
+    for (int x = 0; x < numParams; x++)
     {
-      outputJSON << "\"" << test << "\"" << "\n";
-      outputJSON << "]\n";
+      std::pair<std::string, std::string> fixedParam = tests.testCaseParams[j++];
+      if (x == numParams - 1)
+      {
+        outputJSON << "\"" << fixedParam.first << "\": " << "\"" << fixedParam.second << "\"\n";
+      }
+      else
+      {
+        outputJSON << "\"" << fixedParam.first << "\": " << "\"" << fixedParam.second << "\",\n";
+      }
+    }
+
+    // if i is at the end then we need to close off the obj
+    if (i == size - 1)
+    {
+      outputJSON << "}\n";
     }
     else
     {
-      outputJSON << "\"" << test << "\"" << "," << "\n";
+      outputJSON << "},\n";
     }
-    i++;
   }
+
+  outputJSON << "]\n";
 
   outputJSON << "}";
   outputJSON.close();
+}
+
+/**
+ * params are taken from the json as a string containing 'paramName'='param'
+ * This function splits the paramName and param seperately to label them in the output JSON easier.
+ * (the problem function calls explicility used by the users will contain the same paramNames so makes using them easier as well)
+ */
+std::pair<std::string, std::string> GetParamName(const std::string &param)
+{
+  std::string paramName = "";
+  std::string paramResult = "";
+  bool nameParsed = false;
+  for (int i = 0; i < param.length(); i++)
+  {
+
+    if (param[i] == '=')
+    {
+      nameParsed = true;
+      continue;
+    }
+
+    if (param[i] != ' ' && !nameParsed)
+    {
+      paramName += param[i];
+    }
+    else if (param[i] != ' ' && nameParsed)
+    {
+      paramResult += param[i];
+    }
+  }
+  return {paramName, paramResult};
 }
